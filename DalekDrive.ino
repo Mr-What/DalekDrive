@@ -37,8 +37,8 @@ void setup()
   // Config for Arduino Mega:
   // on mega, PWM motor pins are 44,45 on timer 5,
   // the direction pins (REV) will be 42,43
-  MotR.begin(42,44);  // REV, EN, [dec]
-  MotL.begin(43,45);  // PWM on timer5 (B)
+  MotR.begin(42,44,2.0);  // REV, EN, [dec]
+  MotL.begin(43,45,2.0);  // PWM on timer5 (B)
 
   // set motor PWM freq    1==31250Hz, 2==3926, 3=977, default is 4==480ish Hz
   //TCCR5B = (TCCR5B & 0xF8) | 2; // 3926 Hz
@@ -73,9 +73,11 @@ void loop()
 {
   unsigned long t = millis();
 
+#ifdef VICKY_DRIVE
   // check for mode transition on Motor Controllers
   MotR.update(t);
   MotL.update(t);
+#endif
   
   State.checkCommand(t);
   Sonar.checkTimeout();
