@@ -68,7 +68,7 @@ void setup()
   sei();
 }
 
-
+unsigned long loopCount=0;
 void loop()
 {
   unsigned long t = millis();
@@ -139,9 +139,11 @@ void loop()
               MotL.setSpeed(cmdL);
               MotR.setSpeed(cmdR);
             }
+if ((loopCount++) % 1000 == 0)
           Sonar.printCurrentCM();
           //Sonar.printCurrent();
           sonarProcessed = true;
+          //Serial.println("hi");
         }
     }
 }
