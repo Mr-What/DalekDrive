@@ -18,8 +18,8 @@ H-bridges on left and right rear wheel motor drives.
 
 #define MAX_PWM   252    // don't go over this PWM level.  driver can't do it
 #define MIN_PWM   20     // Motors won't move below this level
-#define STARTUP_TIME  50 // when starting from brake, go to MAX_PWM for this many ms
-#define DEADMAN_TIME 250 // transition to emergency stop if no command update in this time interval
+#define STARTUP_TIME  500 // when starting from brake, go to MAX_PWM for this many ms
+#define DEADMAN_TIME 5000//250 // transition to emergency stop if no command update in this time interval
 
 // Controls how long to wait for motor to slow down/stop
 // before trying to change direction.
@@ -68,10 +68,12 @@ public:
     modeDoneTime = millis() + (long)(speed * decel);
     speed=0;
     mode = MOTOR_STOP;
+    Serial.println("STOP");
   }
 
   void emergencyStop()
   {
+    Serial.print("Emergency ");
     stop();
     modeDoneTime += EMERGENCY_STOP_TIME;
   }
@@ -85,6 +87,8 @@ public:
     pinMode(rev,OUTPUT);
     pinMode(pwm,OUTPUT);
 
+    analogWrite(Pin.PWM,0);
+    
     emergencyStop();
   }
 
@@ -104,6 +108,9 @@ public:
 	analogWrite(Pin.PWM, MAX_PWM);
 	modeDoneTime = t + STARTUP_TIME;
 	speed = spdReq;
+Serial.print(F("Start "));
+Serial.println((mode == MOTOR_START_REV) ? F("REV") : F("FWD"));
+        return;
       case MOTOR_FWD :
       case MOTOR_REV :
 	if (t > modeDoneTime) { emergencyStop(); return; } // deadman expired
@@ -117,6 +124,7 @@ public:
 	speed = spdReq;
 	analogWrite(Pin.PWM,getPWM(speed));
 	modeDoneTime = t + DEADMAN_TIME;
+Serial.println(speed);
 	return;
       case MOTOR_START_REV :
       case MOTOR_START_FWD :
@@ -133,6 +141,7 @@ public:
 	  {
 	    mode = (speed > 0) ? MOTOR_FWD : MOTOR_REV;
 	    modeDoneTime = t + DEADMAN_TIME;
+Serial.println("Started");
 	    setSpeed(speed);
 	  }
 	return;
@@ -144,6 +153,7 @@ public:
   // is needed
   void update(long t)  // current time, from millis()
   {
+//Serial.print(F("Update "));  Serial.println(t);
     switch(mode)
       {
       case MOTOR_STOP : return;
@@ -153,6 +163,7 @@ public:
 	return;
       case MOTOR_START_REV :
       case MOTOR_START_FWD :
+Serial.println(F("Updated start->moving"));
 	if (t > modeDoneTime) setSpeed(speed);
 	return;
       }
