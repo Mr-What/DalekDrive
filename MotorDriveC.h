@@ -17,23 +17,23 @@ H-bridges on left and right rear wheel motor drives.
 */
 
 #define MAX_PWM   252    // don't go over this PWM level.  driver can't do it
-#define MIN_PWM   20     // Motors won't move below this level
-#define STARTUP_TIME  500 // when starting from brake, go to MAX_PWM for this many ms
-#define DEADMAN_TIME 5000//250 // transition to emergency stop if no command update in this time interval
+#define MIN_PWM   15     // Motors won't move below this level
+#define STARTUP_TIME  50 // when starting from brake, go to MAX_PWM for this many ms
+#define DEADMAN_TIME 250//250 // transition to emergency stop if no command update in this time interval
 
 // Controls how long to wait for motor to slow down/stop
 // before trying to change direction.
 // larger value==more delay
-#define EMERGENCY_STOP_TIME 2000  // time after emergency stop before can drive again
+#define EMERGENCY_STOP_TIME 3000  // time after emergency stop before can drive again
 
 // Don't allow immediate change of direction.
 // let it "brake" for a little bit before starting in other direction
-#define MOTOR_READY 0
-#define MOTOR_FWD   1
-#define MOTOR_REV   2
-#define MOTOR_STOP  3
-#define MOTOR_START_FWD 5
-#define MOTOR_START_REV 6
+#define MOTOR_STOP  0
+#define MOTOR_2STOP 1     // 1's is transition state indicator bit
+#define MOTOR_FWD   4
+#define MOTOR_REV   8
+#define MOTOR_2FWD  5
+#define MOTOR_2REV  9
 
 #ifndef ABS
 #define ABS(x)  (((x)<0)?(-(x)):(x))
@@ -44,7 +44,7 @@ H-bridges on left and right rear wheel motor drives.
 class MotorDrive 
 {
 protected:
-  inline static int getPWM(int pwm)
+  inline int getPWM(int pwm)
   {
     pwm = ABS(pwm);
     if (pwm > MAX_PWM) pwm = MAX_PWM;
@@ -64,17 +64,19 @@ public:
 
   void stop()
   {
-    digitalWrite(Pin.PWM , 0);
-    modeDoneTime = millis() + (long)(speed * decel);
-    speed=0;
-    mode = MOTOR_STOP;
-    Serial.println("STOP");
+    analogWrite(Pin.PWM , 0);
+    int stoppingTime = (int)ABS(speed * decel);
+Serial.print(stoppingTime);Serial.println(" ms to stop.");
+    modeDoneTime = millis() + stoppingTime;
+    //speed=0;  don't clobber command in case of direction change
+    mode = MOTOR_2STOP;
   }
 
   void emergencyStop()
   {
     Serial.print("Emergency ");
     stop();
+    speed=0;
     modeDoneTime += EMERGENCY_STOP_TIME;
   }
 
@@ -88,37 +90,47 @@ public:
     pinMode(pwm,OUTPUT);
 
     analogWrite(Pin.PWM,0);
+    digitalWrite(Pin.REV,0);
     
     emergencyStop();
   }
 
   // Set speed -MAX_PWM for max reverse, MAX_PWM for max forward
-  void setSpeed(const int spdReq)
+  void setSpeed(const int spdReq, long t)
   {
-    long t;
-
-    t = millis();
-    switch(mode)
+    byte prevMode = mode;
+    switch(prevMode)
       {
+      case MOTOR_2STOP :
+        if (t < modeDoneTime)
+          {  // make sure things are stopped
+            analogWrite(Pin.PWM,0);
+            return;
+          }
+        // done stoping, continue to STOP mode
+        mode = MOTOR_STOP;
+Serial.println(F("stopped."));
       case MOTOR_STOP :
-        if (t < modeDoneTime) return;
 	if (ABS(spdReq) < MIN_PWM) return;
-	mode = (spdReq < 0) ? MOTOR_START_REV : MOTOR_START_FWD;
-	digitalWrite(Pin.REV, (mode == MOTOR_START_REV) ? HIGH : LOW);
-	analogWrite(Pin.PWM, MAX_PWM);
+	mode = (spdReq < 0) ? MOTOR_2REV : MOTOR_2FWD;
+	digitalWrite(Pin.REV, (mode == MOTOR_2REV) ? HIGH : LOW);
+	analogWrite(Pin.PWM, MAX_PWM); // hard kick to get started
 	modeDoneTime = t + STARTUP_TIME;
 	speed = spdReq;
 Serial.print(F("Start "));
-Serial.println((mode == MOTOR_START_REV) ? F("REV") : F("FWD"));
+Serial.println((mode == MOTOR_2REV) ? F("REV") : F("FWD"));
         return;
       case MOTOR_FWD :
       case MOTOR_REV :
+        digitalWrite(Pin.REV,(prevMode == MOTOR_REV) ? HIGH : LOW);
 	if (t > modeDoneTime) { emergencyStop(); return; } // deadman expired
 	if ( (ABS(spdReq) < MIN_PWM)  ||  // stop or change direction
-	     ((spdReq < 0) && (mode == MOTOR_FWD)) ||
-	     ((spdReq > 0) && (mode == MOTOR_REV)) )
+	     ((spdReq < 0) && (prevMode == MOTOR_FWD)) ||
+	     ((spdReq > 0) && (prevMode == MOTOR_REV)) )
 	  {
 	    stop();
+            // set speed so that it goes to this speed after coast-down
+            speed =  (ABS(spdReq) < MIN_PWM) ? 0 : spdReq;
 	    return;
 	  }
 	speed = spdReq;
@@ -126,13 +138,21 @@ Serial.println((mode == MOTOR_START_REV) ? F("REV") : F("FWD"));
 	modeDoneTime = t + DEADMAN_TIME;
 Serial.println(speed);
 	return;
-      case MOTOR_START_REV :
-      case MOTOR_START_FWD :
-	if ( (ABS(spdReq) < MIN_PWM) ||
-	     ((spdReq < 0) && (mode == MOTOR_START_FWD)) ||
-	     ((spdReq > 0) && (mode == MOTOR_START_REV)) )
-	  {
+      case MOTOR_2REV :
+      case MOTOR_2FWD :
+	if (ABS(spdReq) < MIN_PWM)
+          {
+            speed = 100;  // give it some time to decel, although just starting
+            stop();
+            speed = 0;
+            return;
+          }
+	if ( ((spdReq < 0) && (mode == MOTOR_2FWD)) ||
+	     ((spdReq > 0) && (mode == MOTOR_2REV)) )
+	  { // direction change
+            speed = 100;  // give it some time to decel, although just starting
 	    stop();
+            speed = spdReq;  // go to this speed after coast-down period
 	    return;
 	  }
 	// same direction, but speed request change
@@ -141,32 +161,59 @@ Serial.println(speed);
 	  {
 	    mode = (speed > 0) ? MOTOR_FWD : MOTOR_REV;
 	    modeDoneTime = t + DEADMAN_TIME;
+            digitalWrite(Pin.REV,(mode == MOTOR_REV)?1:0);  // make sure DIR pin is correct
+            analogWrite(Pin.PWM,getPWM(speed));
 Serial.println("Started");
-	    setSpeed(speed);
 	  }
 	return;
       }
   }
 
+  // Set speed -MAX_PWM for max reverse, MAX_PWM for max forward
+  inline void setSpeed(const int spdReq)
+  {
+    setSpeed(spdReq,millis());
+  }
+  
   // update state, but no new command (no deadman reset)
   // Checks if previous command is complete, and an automatic state transition
   // is needed
   void update(long t)  // current time, from millis()
   {
 //Serial.print(F("Update "));  Serial.println(t);
-    switch(mode)
+    if ((modeDoneTime > 0xfffff000) && (t < 999))
+      {  // time counter must have wrapped around
+        modeDoneTime = 0;
+        Serial.println("Clock wrap-around");
+      }
+
+    byte prevMode = mode;
+    switch(prevMode)
       {
-      case MOTOR_STOP : return;
+      case MOTOR_2STOP : 
+      case MOTOR_STOP :
+        if ((t > modeDoneTime) && speed)
+          { // this was a temp stop in a direction change.  Command desired speed.
+Serial.print(F("Restart "));Serial.println(speed);
+            setSpeed(speed,t);
+          }
+//else Serial.println("stopped.");
+        return;
       case MOTOR_FWD :
       case MOTOR_REV :
 	if (t > modeDoneTime) emergencyStop(); // deadman expired
 	return;
-      case MOTOR_START_REV :
-      case MOTOR_START_FWD :
-Serial.println(F("Updated start->moving"));
-	if (t > modeDoneTime) setSpeed(speed);
+      case MOTOR_2REV :
+      case MOTOR_2FWD :
+	if (t > modeDoneTime)
+          {
+            //mode = (prevMode == MOTOR_2REV) ? MOTOR_REV : MOTOR_FWD;
+Serial.println(F("moving"));
+            setSpeed(speed,t);
+          }
 	return;
       }
   }
 
-} MotR, MotL;
+};
+
